@@ -122,33 +122,36 @@ for drone_num in range(count_drones):
     print(f"→ Сохранено {dem_tif}", file=sys.stderr)
 
     dem_layer = QgsRasterLayer(dem_tif, "alos_dem")
+
     if not dem_layer.isValid():
         print("Ошибка: DEM слой не загрузился!")
         continue
     #clip square 
     
-    crs_src = dem_layer.crs()                         
-    crs_m   = QgsCoordinateReferenceSystem("EPSG:3857")
-    xform   = QgsCoordinateTransform(crs_src, crs_m, QgsProject.instance())
-    pt_m    = xform.transform(QgsPointXY(lon, lat))
+    # Determining the sides of a square in WGS 84 coordinates
+    dlat = radius_fly_m / 111000.0
+    dlon = radius_fly_m / (111000.0 * math.cos(math.radians(lat)))
 
-    
-    rect_m = QgsRectangle(
-        pt_m.x() - radius_fly_m,
-        pt_m.y() - radius_fly_m,
-        pt_m.x() + radius_fly_m,
-        pt_m.y() + radius_fly_m
+    rect_deg = QgsRectangle(
+        lon - dlon,
+        lat - dlat,
+        lon + dlon,
+        lat + dlat
     )
 
+    print(dem_layer.source())
     processing.run(
         "gdal:cliprasterbyextent",
         {
-            'INPUT':    dem_layer,
-            'PROJWIN':  rect_m,
+            'INPUT':    dem_layer.source(),
+            'PROJWIN':  f"{rect_deg.xMinimum()},{rect_deg.xMaximum()},{rect_deg.yMinimum()},{rect_deg.yMaximum()}",
             'NODATA':   -9999,
             'OUTPUT':   clip_tif
         }
     )
+    print(clip_tif)
+    if not os.path.exists(clip_tif):
+        print(f"Ошибка: файл {clip_tif} не существует после обрезки!")
 
     #filter
     processing.run(
@@ -162,7 +165,15 @@ for drone_num in range(count_drones):
             'OUTPUT':  mask_tif
         }
     )
-
+    processing.run(
+        "gdal:colorrelief",
+        {
+            'INPUT': mask_tif,
+            'BAND': 1,
+            'COLOR_TABLE': '/tmp/inverted_colormap.txt',
+            'OUTPUT': mask_tif
+        }
+    )
 
     processing.run(
         "gdal:translate",
@@ -175,14 +186,4 @@ for drone_num in range(count_drones):
 
     print(" Готово! Итоговое изображение:", output_png)
 
-
-
-
-
-
-# Write your code here to load some layers, use processing
-# algorithms, etc.
-
-# Finally, exitQgis() is called to remove the
-# provider and layer registries from memory
 qgs.exitQgis()
