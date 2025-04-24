@@ -1,9 +1,4 @@
 from qgis.core import (
-    QgsProject,
-    QgsRectangle,
-    QgsPointXY,
-    QgsCoordinateReferenceSystem,
-    QgsCoordinateTransform,
     QgsApplication,
     QgsRasterLayer
 
@@ -12,9 +7,7 @@ import os
 import sys
 import math
 import requests
-
 from qgis.analysis import QgsNativeAlgorithms
-
 from qgis import processing
 
 QGIS_PREFIX = "/usr"
@@ -22,8 +15,6 @@ sys.path.append(os.path.join(QGIS_PREFIX, "share/qgis/python"))
 sys.path.append(os.path.join(QGIS_PREFIX, "share/qgis/python/plugins"))
 
 from processing.core.Processing import Processing
-
-
 
 DEM_TYPE = "AW3D30" 
   
@@ -34,10 +25,7 @@ url = "https://portal.opentopography.org/API/globaldem"
 
 os.makedirs(out_dir, exist_ok=True)
 
-dem_tif  = f"{out_dir}/alos_dem.tif"
-clip_tif      = f"{out_dir}/clip_dem.tif"
-mask_tif      = f"{out_dir}/mask_dem.tif"
-output_png    = f"{out_dir}/dem_filtered.png"
+
 
 
 # Supply the path to the qgis install location
@@ -80,17 +68,22 @@ for i in range(count_drones):
             print(f'Введите координаты дрона {i+1} по  долготе и  широте через пробел: ')
             lon, lat = map(float, input().split())
             step_altitude = (max_altitude-min_altitude)/count_drones
-            if -90 <= lat <= 90 and -180 <= lon <= 180 and step_altitude>=1:
+            if -90 <= lat <= 90 and -180 <= lon <= 180 and step_altitude>=2:
                 coordinates.append([lon, lat])
                 break
             else:
-                print('Ошибка, широта или долгота имеют не возможные значения')
+                print('Ошибка, широта или долгота имеют не возможные значения  или шаг высоты меньше 2 метров')
         except ValueError:
             print("Ошибка: введите два числа через пробел.")
 
 
-
 for drone_num in range(count_drones):
+
+    dem_tif  = f"{out_dir}/alos_dem_drone_num_{drone_num}.tif"
+    mask_tif      = f"{out_dir}/mask_dem_drone_num_{drone_num}.tif"
+    output_png    = f"{out_dir}/dem_filtered_drone_num_{drone_num}.png"
+
+
 
     lon, lat = coordinates[drone_num]
 
@@ -111,6 +104,7 @@ for drone_num in range(count_drones):
     "outputFormat": "GTiff",
     "API_Key": API_KEY
     }
+    
     print("Запрашиваем DEM у OpenTopography...", file=sys.stderr)
     r = requests.get(url, params=params, stream=True)
     r.raise_for_status()
@@ -119,67 +113,34 @@ for drone_num in range(count_drones):
         for chunk in r.iter_content(1024*1024):
             f.write(chunk)
 
-    print(f"→ Сохранено {dem_tif}", file=sys.stderr)
+    print(f"Сохранено {dem_tif}", file=sys.stderr)
 
     dem_layer = QgsRasterLayer(dem_tif, "alos_dem")
 
     if not dem_layer.isValid():
         print("Ошибка: DEM слой не загрузился!")
         continue
-    #clip square 
-    
-    # Determining the sides of a square in WGS 84 coordinates
-    dlat = radius_fly_m / 111000.0
-    dlon = radius_fly_m / (111000.0 * math.cos(math.radians(lat)))
-
-    rect_deg = QgsRectangle(
-        lon - dlon,
-        lat - dlat,
-        lon + dlon,
-        lat + dlat
-    )
-
-    print(dem_layer.source())
-    processing.run(
-        "gdal:cliprasterbyextent",
-        {
-            'INPUT':    dem_layer.source(),
-            'PROJWIN':  f"{rect_deg.xMinimum()},{rect_deg.xMaximum()},{rect_deg.yMinimum()},{rect_deg.yMaximum()}",
-            'NODATA':   -9999,
-            'OUTPUT':   clip_tif
-        }
-    )
-    print(clip_tif)
-    if not os.path.exists(clip_tif):
-        print(f"Ошибка: файл {clip_tif} не существует после обрезки!")
 
     #filter
     processing.run(
         "gdal:rastercalculator",
         {
-            'INPUT_A': clip_tif,
+            'INPUT_A': dem_tif,
             'BAND_A': 1,
-            'FORMULA': f"(A>={min_altitude+drone_num*step_altitude})",
-            'NO_DATA': 0,
-            'RTYPE':   5,        # Float32
+            'FORMULA': f"(A>={min_altitude+drone_num*step_altitude})*0+(A<{min_altitude+drone_num*step_altitude})*255",
+            'NO_DATA': None,
+            'RTYPE':   1,        # byte
             'OUTPUT':  mask_tif
         }
     )
-    processing.run(
-        "gdal:colorrelief",
-        {
-            'INPUT': mask_tif,
-            'BAND': 1,
-            'COLOR_TABLE': '/tmp/inverted_colormap.txt',
-            'OUTPUT': mask_tif
-        }
-    )
+  
 
     processing.run(
         "gdal:translate",
         {
             'INPUT': mask_tif,
             'BANDS': [1],
+            'NODATA': None,
             'OUTPUT': output_png
         }
     )
