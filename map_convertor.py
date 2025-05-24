@@ -8,6 +8,7 @@ import math
 import requests
 from qgis.analysis import QgsNativeAlgorithms
 from qgis import processing
+from PIL import Image
 
 QGIS_PREFIX = "/usr"
 sys.path.append(os.path.join(QGIS_PREFIX, "share/qgis/python"))
@@ -81,6 +82,7 @@ for drone_num in range(count_drones):
     dem_tif  = f"{out_dir}/alos_dem_drone_num_{drone_num}.tif"
     mask_tif      = f"{out_dir}/mask_dem_drone_num_{drone_num}.tif"
     output_png    = f"{out_dir}/dem_filtered_drone_num_{drone_num}.png"
+    output_pgm = f"{out_dir}/dem_filtered_drone_num_{drone_num}.pgm"
 
 
 
@@ -147,28 +149,31 @@ for drone_num in range(count_drones):
 
     projected_tif = f"{out_dir}/projected_mask_{drone_num}.tif"
     projected_dem_tif = f"{out_dir}/projected_dem_{drone_num}.tif"
-
+    try:
     # Перепроецируем в UTM
-    processing.run(
-        "gdal:warpreproject",
-        {
-            'INPUT': dem_tif,
-            'SOURCE_CRS': dem_layer.crs().authid(),
-            'TARGET_CRS': utm_crs,
-            'RESAMPLING': 0,  # Nearest neighbor
-            'OUTPUT': projected_dem_tif
-        }
-    )
-    processing.run(
-        "gdal:warpreproject",
-        {
-            'INPUT': mask_tif,
-            'SOURCE_CRS': dem_layer.crs().authid(),
-            'TARGET_CRS': utm_crs,
-            'RESAMPLING': 0,  # Nearest neighbor
-            'OUTPUT': projected_tif
-        }
-    )
+        processing.run(
+            "gdal:warpreproject",
+            {
+                'INPUT': dem_tif,
+                'SOURCE_CRS': dem_layer.crs().authid(),
+                'TARGET_CRS': utm_crs,
+                'RESAMPLING': 0,  # Nearest neighbor
+                'OUTPUT': projected_dem_tif
+            }
+        )
+        processing.run(
+            "gdal:warpreproject",
+            {
+                'INPUT': mask_tif,
+                'SOURCE_CRS': dem_layer.crs().authid(),
+                'TARGET_CRS': utm_crs,
+                'RESAMPLING': 0,  # Nearest neighbor
+                'OUTPUT': projected_tif
+            }
+        )
+        print(f"Конвертация удалась !")
+    except Exception as e:
+        print(f"Ошибка конвертации в UTM: {e}")
 
     # Читаем размеры перепроецированного растра
     projected_layer = QgsRasterLayer(projected_tif, "utm_projected")
@@ -180,15 +185,35 @@ for drone_num in range(count_drones):
     output_png = f"{out_dir}/dem_filtered_drone_num_{drone_num}.png"
 
     # Преобразуем в квадратный PNG
-    processing.run(
-        "gdal:translate",
-        {
-            'INPUT': projected_tif,
-            'TARGET_SIZE': [side, side],
-            'FORMAT': 'PNG',
-            'OUTPUT': output_png
-        }
-    )
+    try:
+        processing.run(
+            "gdal:translate",
+            {
+                'INPUT': projected_tif,
+                'TARGET_SIZE': [side, side],
+                'FORMAT': 'PNG',
+                'OUTPUT': output_png
+            }
+        )
+        print(f"Конвертировано в {output_png}")
+    except Exception as e:
+        print(f"Ошибка конвертации в PNG: {e}")
+
+    try:
+        img = Image.open(output_png)
+        img.save(output_pgm)
+        print(f"Конвертировано в {output_pgm}")
+    except Exception as e:
+        print(f"Ошибка конвертации в PGM: {e}")
+
+    # Визуализация (опционально)
+    img = Image.open(output_png)
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot()
+    ax.imshow(img)
+    plt.axis("off")
+    plt.show()
 
 
 
